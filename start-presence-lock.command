@@ -5,6 +5,9 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
+# 任何退出路径都先等用户按回车，防止 Terminal 报"会话很快结束"
+trap 'echo ""; read -p "按回车键关闭此窗口"' EXIT
+
 if [ ! -f "known_faces.npy" ]; then
     echo "================================================"
     echo "  还没注册你的脸。"
@@ -34,4 +37,4 @@ echo "  日志：presence-lock.log"
 echo "  停止：双击 stop-presence-lock.command"
 echo "================================================"
 echo ""
-read -p "按回车键关闭此窗口（程序继续在后台运行）"
+# 脚本结束，trap EXIT 会提示按回车关闭窗口（程序已在后台，关窗无影响）
