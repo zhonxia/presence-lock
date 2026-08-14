@@ -123,6 +123,11 @@ presence-lock/
 3. Locking = display sleep + password requirement. It is the system lock screen's security, not a custom lock.
 4. It cannot protect against someone who already knows your password.
 
+## Future Plans
+
+- **Distinguish "nobody" from "stranger"** — separate lock timers: 60s when no face is visible (you may be looking down or briefly away), 10s when a stranger's face is detected. A stranger seen recently keeps the fast timer even if they step out of frame.
+- **Human-body detection as a fallback** — run `VNDetectHumanRectanglesRequest` alongside face detection in one Vision call, so looking down or turning away does not count as "left".
+
 ## Pitfalls for Contributors
 
 This repo exists because the obvious approaches do not work on macOS. Read these before touching the locking/permission code:
