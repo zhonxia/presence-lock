@@ -1,7 +1,7 @@
 {
   "camera_index": 0,
   "idle_threshold_sec": 10,
-  "idle_grace_sec": 30,
+  "idle_grace_sec": 90,
   "absent_lock_sec": 10,
   "alert_sec": 3,
   "recheck_interval_sec": 300,
