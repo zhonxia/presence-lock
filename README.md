@@ -128,6 +128,7 @@ presence-lock/
 - **Distinguish "nobody" from "stranger"** — separate lock timers: 60s when no face is visible (you may be looking down or briefly away), 10s when a stranger's face is detected. A stranger seen recently keeps the fast timer even if they step out of frame.
 - **Human-body detection as a fallback** — run `VNDetectHumanRectanglesRequest` alongside face detection in one Vision call, so looking down or turning away does not count as "left".
 - **Auto-unlock after wake (face-verified password injection)** — wake the screen with any key, recognize *your* face, then auto-fill the password (stored in Keychain) into the login window via event injection — no Touch ID needed. Camera opens only after wake, not continuously. Prerequisite experiment: verify event injection into `loginwindow` still works on macOS 15.
+  - *Why:* on a built-in MacBook keyboard, Touch ID is one keypress away, so this feature saves little. But on an external-display setup (Mac mini, Mac Studio, closed-lid MacBook), there is no Touch ID — unlocking means reaching for the laptop or typing a password. Apple's own answer to this scenario is Apple Watch unlock (extra hardware); this feature uses the camera you already own. Note: Bluetooth keyboards need *Allow Bluetooth devices to wake this Mac* enabled in System Settings.
 
 ## Pitfalls for Contributors
 
