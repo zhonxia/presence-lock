@@ -1,0 +1,5 @@
+opencv-python>=4.9
+pyobjc-framework-Vision>=10.0
+pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-Quartz>=10.0
+numpy>=1.26

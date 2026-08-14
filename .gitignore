@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 生物特征数据（隐私，不提交）
+known_faces.npy
+
+# 编译产物（可用源码重新编译）
+grant_camera_bin
+
+# macOS
+.DS_Store
