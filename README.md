@@ -37,8 +37,8 @@ python3 -m venv .venv
 
 ### 一键启动（日常使用）
 
-双击 `start-presence-lock.command` 启动（弹出终端窗口显示状态，关闭窗口即停止）。
-双击 `stop-presence-lock.command` 停止。
+双击 `start-presence-lock.command` 启动：程序在**后台**运行，终端窗口立即关闭也不影响。
+日志写到 `presence-lock.log`。停止：双击 `stop-presence-lock.command`。
 
 ## 权限（只申请一次）
 

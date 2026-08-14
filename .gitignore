@@ -6,6 +6,9 @@ __pycache__/
 # 生物特征数据（隐私，不提交）
 known_faces.npy
 
+# 运行日志
+presence-lock.log
+
 # 编译产物（可用源码重新编译）
 grant_camera_bin
 
