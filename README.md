@@ -1,82 +1,140 @@
-# presence-lock
+# PresenceLock
 
-macOS 摄像头在场检测锁屏工具：确认电脑前的人是**你**，不是任何人。
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-0078D4.svg)](https://www.apple.com/macos/)
 
-别人坐到你电脑前（或你离开超过设定时间），自动锁屏。
+[🇨🇳 中文](README.zh.md) | [🇬🇧 English](README.md)
 
-## 原理
+> Auto-lock your Mac when the person at the keyboard is **not you**.
+> Webcam presence detection with face identity verification, running 100% locally.
 
-- 摄像头读帧 → macOS 原生 Vision 框架（VNCreateFaceprintRequest）检测人脸并生成 128 维特征
-- 第一次使用时注册你的脸（`register.py`），之后每帧比对：是本人 → 安全；没人 / 非本人 → 计时 → 锁屏
-- 锁屏用 `pmset displaysleepnow` 关闭显示器，唤醒需要密码（零权限，最可靠）
-- 摄像头不是一直开：待机时关闭（绿灯灭），键鼠空闲超阈值或每 5 分钟才启动一次确认
+---
 
-## 安装
+## Why (Motivation)
+
+I kept forgetting to lock my Mac when leaving my desk — in an office, a lab, a shared space, that's a privacy risk. The obvious fix is "lock when I walk away", but every existing option on macOS disappointed me:
+
+- **Bluetooth proximity apps** (the entire App Store category): they judge presence by phone distance — slow to react, unreliable, and useless the moment you leave your phone on the desk.
+- **No camera-based option exists on macOS at all** (see the gap below).
+
+I wanted a tool that answers the real question: *is the person at this keyboard me?* — not "is a phone nearby?". That's what this is.
+
+## The Gap: nobody builds this for macOS
+
+| Platform | Camera-based walk-away lock | Notes |
+|---|---|---|
+| Windows | ✅ Microsoft Dynamic Lock (Bluetooth) + open-source tools (e.g. SeatSentinel, windows_bey) | Dynamic Lock is Bluetooth, not camera; several camera tools exist |
+| Linux | ✅ boltgolt/howdy (7.7k★) and others | howdy is face *unlock*; walk-away locking is bolted on by users |
+| **macOS** | ❌ **Nothing.** App Store = Bluetooth-only. GitHub = zero camera-based presence-lock projects. | |
+
+Why the gap? Three macOS-specific walls that this project walks through:
+
+1. **TCC privacy permissions** — reading the camera from a CLI process fails silently unless you request permission the right way (see the bundled `grant_camera.swift`).
+2. **No public lock-screen API** — every naive approach (osascript key events, CGEvent injection, CGSession) fails on modern macOS. This project uses `pmset displaysleepnow` — zero-permission, works everywhere.
+3. **The camera indicator light** — always-on cameras are creepy and wasteful, so this project opens the camera **only when it needs to check**.
+
+## How it differs from existing solutions
+
+| | **PresenceLock** (macOS) | Bluetooth proximity apps | Other platform camera tools |
+|---|---|---|---|
+| Verifies **your identity**, not just "a person exists" | ✅ | ❌ phone proximity only | mostly ❌ (only some do face match) |
+| Lock latency | seconds | tens of seconds / unreliable | seconds |
+| Camera always on | ❌ opens on demand (~2s every 30s idle, or every 5 min while active) | — | often always-on |
+| Zero-permission locking (no Accessibility/Auxiliary access) | ✅ `pmset displaysleepnow` | — | varies |
+| 100% local processing (Vision Neural Engine, nothing uploaded) | ✅ | — | varies |
+| Stranger-resistant | ✅ keyboard/mouse activity does NOT disarm the check; periodic re-verification every 5 min | ❌ | varies |
+
+## Features
+
+- **Face identity, not face detection** — registers your face once, then requires *your* face to consider the desk occupied. Strangers, roommates, and empty chairs all trigger the lock.
+- **Stranger-resistant state machine** — typing/moving the mouse never clears the alarm; only seeing your face does. Periodic re-verification (default 5 min) catches someone who sits down after you leave.
+- **Camera on demand** — the green light is off almost all the time. The camera opens only when the keyboard/mouse has been idle past a threshold, then closes again.
+- **Lock-screen countdown** — a 3-second notification before locking; look at the camera to cancel (prevents false locks from bending down to pick up a pen).
+- **Zero-permission locking** — `pmset displaysleepnow` + system "require password after display sleep". No Accessibility, no key injection, no private APIs.
+- **Double-click launcher** — `start-presence-lock.command` runs it in the background (closing the terminal window does not stop it); `stop-presence-lock.command` stops it.
+
+## Installation
+
+Requires macOS 14+ and Xcode Command Line Tools (only to compile the tiny permission helper).
 
 ```bash
-cd /Users/qinbai/Documents/个人项目/presence-lock
+git clone https://github.com/zhonxia/presence-lock.git
+cd presence-lock
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+.venv/bin/pip install -r requirements.txt
 ```
 
-## 使用
-
-所有命令用 `./run.sh` 启动（它清掉宿主环境的 PYTHONPATH，防止 import 串环境）：
+## Quick Start
 
 ```bash
-# 1. 注册你的脸（首次会弹摄像头权限，点允许）
-./run.sh register.py
-#    按 s 拍 3 张（正面/稍侧/稍抬头），按 q 保存
+# 1. Grant camera permission (compiled helper pops the system dialog once)
+swiftc -O grant_camera.swift -o grant_camera_bin && ./grant_camera_bin
 
-# 2. 先试 dry-run：只检测不锁屏，看识别准不准
+# 2. Register your face (s = capture, 3 shots at slightly different angles, q = save)
+./run.sh register.py
+
+# 3. Dry-run first: detect without locking (optional --preview shows the camera view)
 ./run.sh main.py --dry-run --preview
 
-# 3. 正式运行
+# 4. Run for real
 ./run.sh main.py
 ```
 
-### 一键启动（日常使用）
+Make sure the system is set to require a password after display sleep:
+**System Settings > Lock Screen > Require password after screen saver begins or display is turned off > Immediately**.
 
-双击 `start-presence-lock.command` 启动：程序在**后台**运行，终端窗口立即关闭也不影响。
-日志写到 `presence-lock.log`。停止：双击 `stop-presence-lock.command`。
+## Architecture
 
-## 权限（只申请一次）
+Four-state machine. The one rule that matters: **only your face, seen by the camera, ever disarms the lock.** Idle time only decides *when* to look.
 
-| 权限 | 位置 | 用途 |
-|---|---|---|
-| 摄像头 | 首次运行弹窗，点允许 | 读摄像头 |
+```mermaid
+flowchart TD
+    A[ARMED - idle, camera off] -->|idle > 10s & last confirm > 30s<br>OR last confirm > 300s| B[CHECKING - camera on, 1 frame/s]
+    B -->|your face found| A
+    B -->|nobody or stranger for 10s| C[ALERT - 3s countdown]
+    C -->|your face appears| B
+    C -->|countdown ends| D[LOCKED - display sleep, camera off]
+    D -->|after 60s| A
+```
 
-锁屏不需要额外权限，但必须确认系统设置里开了「屏幕关闭后要求密码」：
-系统设置 > 锁定屏幕 > 屏幕关闭后要求密码 > 立即（或短延迟）。
-否则关屏唤醒不需要密码，等于没锁。
+Face embedding: Apple Vision `VNCreateFaceprintRequest` (128-dim, Neural Engine). Configurable parameters in `config.json` (idle/absent/countdown thresholds, match distance, recheck interval).
 
-## 配置（config.json）
+## File Structure
 
-| 参数 | 默认 | 含义 |
-|---|---|---|
-| idle_threshold_sec | 10 | 键鼠空闲多久后启动摄像头确认 |
-| idle_grace_sec | 30 | 确认过本人后，空闲多久才需要再次摄像头确认 |
-| absent_lock_sec | 10 | 确认阶段连续多久没检测到本人就锁屏 |
-| alert_sec | 3 | 锁屏前倒计时（秒），期间人回来看摄像头可取消 |
-| recheck_interval_sec | 300 | 每 5 分钟强制复查一次，防陌生人坐过来 |
-| match_threshold | 0.60 | 人脸比对距离阈值，越小越严格（认错人调低，误锁调高） |
-| frame_interval_sec | 1.0 | 检测帧间隔（秒） |
+```
+presence-lock/
+├── main.py                    # state machine + main loop
+├── vision_face.py             # Vision face detection + 128-dim embedding
+├── register.py                # interactive face registration
+├── idle.py                    # keyboard/mouse idle time (ioreg HIDIdleTime)
+├── locker.py                  # pmset displaysleepnow locking
+├── grant_camera.swift         # TCC camera permission helper (swiftc)
+├── run.sh                     # venv launcher (clears host PYTHONPATH)
+├── start-presence-lock.command  # double-click background start
+├── stop-presence-lock.command   # double-click stop
+└── config.json                # all tunable parameters
+```
 
-## 已知限制（诚实说明）
+## Known Limitations (honest)
 
-1. 摄像头绿灯常亮是硬件行为，软件关不掉。本工具尽量只在确认阶段开摄像头，正常使用时每 5 分钟亮几秒。
-2. 本人低头、背对屏幕超过 absent_lock_sec 会被锁（罕见）。倒计时 3 秒内看摄像头可取消。
-3. 这个工具防不住你把密码告诉别人。锁屏防线是系统锁屏，够用但不万能。
-4. 锁屏（关屏）后 60 秒内不检测（等唤醒），之后回到待机。
+1. The camera indicator light is hardware-controlled — it lights whenever the camera is open. This project minimizes exposure (on-demand only) but cannot disable the LED.
+2. Looking down / away from the screen longer than `absent_lock_sec` (10s) will lock. The 3s countdown exists for this: glance at the camera to cancel.
+3. Locking = display sleep + password requirement. It is the system lock screen's security, not a custom lock.
+4. It cannot protect against someone who already knows your password.
 
-## 踩坑记录（写给以后的自己）
+## Pitfalls for Contributors
 
-- 锁屏不能走 osascript 模拟 Cmd+Ctrl+Q（error 1002，TCC 查 osascript 自身）也不能走
-  CGEventPost（macOS 15 静默丢弃无权限 CLI 注入的事件），CGSession 工具已被移除。
-  pmset displaysleepnow 零权限可用，配合「屏幕关闭后要求密码」设置。
-- pyobjc 的 Vision 绑定没有 VNGenerateFaceEmbeddingsRequest（macOS 14 新 API），
-  用 VNCreateFaceprintRequest + obs.faceprint().descriptorData()（128 维 float32）。
-- Hermes 等宿主环境会注入 PYTHONPATH，venv 里 import 会串到宿主 numpy（版本不匹配崩）。
-  用 `env -u PYTHONPATH` 或 run.sh 启动。
-- 摄像头权限：OpenCV 请求权限后不等人点允许就失败。先用 swiftc 编译的 grant_camera_bin
-  请求权限（弹窗等用户点），再跑 OpenCV。
+This repo exists because the obvious approaches do not work on macOS. Read these before touching the locking/permission code:
+
+- **osascript key injection fails** (`error 1002`) — TCC checks `osascript` itself, not the host app.
+- **CGEventPost key injection silently does nothing** on macOS 15 for unprivileged CLI processes. Verify injection with a visible key (Cmd+Space), not an invisible one (F17).
+- **CGSession -suspend was removed** in macOS 15.
+- **`pmset displaysleepnow` is the zero-permission winner** — pair it with "require password after display sleep".
+- **OpenCV requests camera permission and fails immediately** if the user hasn't answered yet. Request permission first via the bundled Swift helper.
+- **pyobjc lacks `VNGenerateFaceEmbeddingsRequest`** (macOS 14 API) — use `VNCreateFaceprintRequest` + `faceprint().descriptorData()` (128 float32).
+- **Host environments inject PYTHONPATH** — always launch via `run.sh` (clears it), or numpy imports crash with cryptic version errors.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
