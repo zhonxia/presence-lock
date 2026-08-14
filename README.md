@@ -127,7 +127,7 @@ presence-lock/
 
 - **Distinguish "nobody" from "stranger"** — separate lock timers: 60s when no face is visible (you may be looking down or briefly away), 10s when a stranger's face is detected. A stranger seen recently keeps the fast timer even if they step out of frame.
 - **Human-body detection as a fallback** — run `VNDetectHumanRectanglesRequest` alongside face detection in one Vision call, so looking down or turning away does not count as "left".
-- **Auto-unlock (borrowing the Bluetooth-proximity-app approach)** — Accessibility permission + password stored in Keychain + event injection into the login window, triggered by recognizing *your* face instead of phone proximity. Prerequisite experiment: verify that event injection into `loginwindow` still works on macOS 15.
+- **Semi-auto unlock (face instead of fingerprint hunt)** — after the screen is woken (any key press), recognize *your* face and prompt "press Touch ID". Face recognition replaces the "find the fingerprint button" step; the final verification is still the system's own Touch ID/password. No always-on camera: detection only runs after wake, preserving the on-demand camera design.
 
 ## Pitfalls for Contributors
 
