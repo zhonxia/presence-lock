@@ -51,7 +51,8 @@
 - **摄像头按需开关**：绿灯几乎全程是灭的。只有键鼠空闲超阈值才开摄像头确认，确认完就关。
 - **锁屏前倒计时**：锁屏前 3 秒系统通知，看一眼摄像头即可取消（防止低头捡笔就被锁）。
 - **零权限锁屏**：`pmset displaysleepnow` + 系统"屏幕关闭后要求密码"。不需要辅助功能授权、不需要注入按键、不碰私有 API。
-- **双击启动**：`start-presence-lock.command` 后台运行（关终端窗口不影响），`stop-presence-lock.command` 停止。
+- **唤醒自动解锁**（可选，config `unlock_enabled`）：锁屏后按任意键唤醒（或锁屏界面按键），摄像头识别到你的脸 → 自动把密码（存钥匙串）注入登录窗口解锁，不用碰 Touch ID。摄像头只在检测时开几秒。针对外接显示器/无 Touch ID 场景（Mac mini、合盖外接），苹果官方的解法是 Apple Watch（额外硬件），本方案零新增硬件。
+- **双击启动**：`start-presence-lock.command` 后台运行（关终端窗口不影响，启动时自动检测自动解锁权限），`stop-presence-lock.command` 停止。
 
 ## 安装
 
@@ -88,18 +89,49 @@ swiftc -O grant_camera.swift -o grant_camera_bin && ./grant_camera_bin
 双击 `start-presence-lock.command` 后台启动（程序在后台运行，关终端窗口不影响，日志写 presence-lock.log）。
 双击 `stop-presence-lock.command` 停止。
 
+### 自动解锁（可选功能）的设置
+
+自动解锁的密码注入需要**宿主有辅助功能权限**（系统设置 > 隐私与安全性 > 辅助功能）。从 iTerm 启动需勾选 iTerm，双击启动需勾选「终端」——启动脚本会自动检测并在窗口里提示权限状态。
+
+密码只需存一次钥匙串（改密码后重新执行一次）：
+
+```bash
+security add-generic-password -a presence-lock -s presence-lock-unlock -w '你的Mac登录密码'
+```
+
+无需自动解锁时，把 config.json 的 `unlock_enabled` 改为 `false` 即可。
+
 ## 架构
 
-四态状态机。核心规则只有一条：**只有摄像头看到你的脸才能解除警报**，键鼠空闲时间只决定"什么时候看"。
+四态状态机 + 三条独立的检测线。核心规则只有一条：**只有摄像头看到你的脸才能解除警报**，键鼠空闲时间只决定"什么时候看"。
+
+```mermaid
+mindmap
+  root((presence-lock 检测逻辑))
+    空闲线
+      空闲 10 秒 → 触发检查
+      确认本人在 → 60 秒后复查
+      人不在 → 直接走锁屏流程
+    防陌生人线
+      每 300 秒强制复查
+      与空闲与否无关
+    解锁监听线
+      锁屏/黑屏时生效
+        黑屏唤醒 → 识别
+        锁屏界面按键 → 识别
+      识别到本人 → 自动注入密码解锁
+```
 
 ```mermaid
 flowchart TD
-    A[ARMED 待机 - 摄像头关] -->|空闲>10s 且距上次确认>30s<br>或 距上次确认>300s| B[CHECKING 确认 - 摄像头开，每秒一帧]
-    B -->|检测到本人脸| A
+    A[ARMED 待机 - 摄像头关] -->|空闲>10s 且超动态间隔<br>或 距上次确认>300s| B[CHECKING 确认 - 摄像头开]
+    B -->|检测到本人脸<br>复查间隔置 60s| A
     B -->|无人或非本人持续10s| C[ALERT 倒计时3s]
     C -->|出现本人脸| B
-    C -->|倒计时结束| D[LOCKED 锁屏 - 关屏，摄像头关]
-    D -->|60s 后| A
+    C -->|倒计时结束| D[LOCKED 锁屏 - 关屏]
+    D -->|60s 后回待机| A
+    D -->|解锁监听: 黑屏唤醒 / 锁屏界面按键| E[识别本人 → 注入密码解锁]
+    E -->|解锁成功| A
 ```
 
 人脸特征：Apple Vision `VNCreateFaceprintRequest`（128 维，神经引擎加速）。所有参数在 `config.json` 里可调（空闲/无人/倒计时阈值、比对距离、复查周期）。
@@ -113,6 +145,7 @@ presence-lock/
 ├── register.py                # 交互式人脸注册
 ├── idle.py                    # 键鼠空闲检测（ioreg HIDIdleTime）
 ├── locker.py                  # pmset displaysleepnow 锁屏
+├── unlock.py                  # 自动解锁：锁屏监听→人脸识别→注入密码
 ├── grant_camera.swift         # TCC 摄像头权限工具（swiftc 编译）
 ├── run.sh                     # venv 启动器（清理宿主 PYTHONPATH）
 ├── start-presence-lock.command  # 双击后台启动
@@ -131,9 +164,7 @@ presence-lock/
 
 - **区分"没人"和"陌生人"**：分开计时——画面没人（可能低头或短暂离开）60 秒锁屏，检测到陌生人的脸 10 秒锁屏；近期出现过陌生人时，即使他走出画面也延续快速锁屏。
 - **人体检测兜底**：人脸检测的同时并行跑 `VNDetectHumanRectanglesRequest`（一次调用完成），低头、背对屏幕不算"离开"。
-- **唤醒后自动解锁（人脸验证 + 自动填充密码）**：按任意键唤醒屏幕（或锁屏界面按键）→ 识别到你的脸 → 自动把密码（存钥匙串）注入登录窗口完成解锁，不用再碰 Touch ID。摄像头只在检测时开，不常驻。
-  - *状态：前置实验已全部通过（macOS 15 实测）*——锁屏后摄像头可读；CGEvent 注入 loginwindow 有效（需从授权过辅助功能的宿主运行，如 iTerm）；锁屏检测用 `CGSSessionScreenIsLocked`；触发逻辑 = 黑屏唤醒翻转 + 亮屏锁屏界面按键（HIDIdleTime 归零）。
-  - *动机*：笔记本内置键盘上 Touch ID 就在指尖，这个功能省不了什么；但外接显示器场景（Mac mini、Mac Studio、笔记本合盖外接）没有 Touch ID——解锁要么伸手够笔记本，要么每次输密码。苹果官方的解法是 Apple Watch 解锁（额外硬件），本方案用已有的摄像头，零新增硬件。注意：蓝牙键盘需在系统设置开启"允许蓝牙设备唤醒这台 Mac"。
+- **媒体播放豁免**：检测到正在播放视频/全屏（`pmset -g assertions` 的 Media playback 断言）时自动拉长检查间隔，看视频完全不打扰。
 
 ## 给贡献者的踩坑记录
 
@@ -146,6 +177,10 @@ presence-lock/
 - **OpenCV 请求摄像头权限后不等人点允许就失败**——先跑项目里的 Swift 权限工具。
 - **pyobjc 没有绑定 `VNGenerateFaceEmbeddingsRequest`**（macOS 14 新 API）——用 `VNCreateFaceprintRequest` + `faceprint().descriptorData()`（128 个 float32）。
 - **宿主环境会注入 PYTHONPATH**——一律用 `run.sh` 启动（会清掉），否则 numpy import 报错很诡异。
+- **锁屏检测用 `CGSSessionScreenIsLocked`**（`CGSessionCopyCurrentDictionary` 的键名带 kCGS 前缀，别写错）；`kCGSSessionOnConsoleKey` 在锁屏时仍是 True，不能用来判锁屏。
+- **CGEvent 注入权限跟着宿主 app 走**——iTerm 授权了从 iTerm 跑就有效，双击启动要勾选「终端」。未授权时注入静默失败（不报错），所以启动脚本要主动探测权限。
+- **注入速度**：每个字符 0.015 秒是安全下限，更快会丢字符导致密码错误；0.05 秒则明显可见"打字过程"。
+- **唤醒检测**：`CGDisplayIsAsleep` 轮询即可，黑屏→亮屏翻转是可靠的解锁触发信号；锁屏界面按键触发用 `HIDIdleTime` 归零（ioreg）。
 
 ## 许可证
 

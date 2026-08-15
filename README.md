@@ -52,7 +52,8 @@ Why the gap? Three macOS-specific walls that this project walks through:
 - **Camera on demand** — the green light is off almost all the time. The camera opens only when the keyboard/mouse has been idle past a threshold, then closes again.
 - **Lock-screen countdown** — a 3-second notification before locking; look at the camera to cancel (prevents false locks from bending down to pick up a pen).
 - **Zero-permission locking** — `pmset displaysleepnow` + system "require password after display sleep". No Accessibility, no key injection, no private APIs.
-- **Double-click launcher** — `start-presence-lock.command` runs it in the background (closing the terminal window does not stop it); `stop-presence-lock.command` stops it.
+- **Wake auto-unlock** (optional, config `unlock_enabled`) — after any key wakes the screen (or a keypress on the lock screen), the camera recognizes *your* face and the password (stored in Keychain) is injected into the login window — no Touch ID needed. Camera opens only for a few seconds during detection. Built for external-display / no-Touch-ID setups (Mac mini, closed-lid MacBook), where Apple's own answer is an Apple Watch (extra hardware) and this needs zero added hardware.
+- **Double-click launcher** — `start-presence-lock.command` runs it in the background (closing the terminal window does not stop it, and it probes the auto-unlock permission at start); `stop-presence-lock.command` stops it.
 
 ## Installation
 
@@ -84,18 +85,49 @@ swiftc -O grant_camera.swift -o grant_camera_bin && ./grant_camera_bin
 Make sure the system is set to require a password after display sleep:
 **System Settings > Lock Screen > Require password after screen saver begins or display is turned off > Immediately**.
 
+### Auto-unlock (optional) setup
+
+Password injection needs the **host app granted Accessibility** (System Settings > Privacy & Security > Accessibility). Authorize iTerm if you launch from it, or authorize "Terminal" for double-click launch — the start script probes this and prints the status.
+
+Store your login password in the Keychain once (re-run it after changing your password):
+
+```bash
+security add-generic-password -a presence-lock -s presence-lock-unlock -w 'your Mac password'
+```
+
+Set `unlock_enabled` to `false` in config.json to disable auto-unlock.
+
 ## Architecture
 
-Four-state machine. The one rule that matters: **only your face, seen by the camera, ever disarms the lock.** Idle time only decides *when* to look.
+Four-state machine + three independent detection lines. The one rule that matters: **only your face, seen by the camera, ever disarms the lock.** Idle time only decides *when* to look.
+
+```mermaid
+mindmap
+  root((presence-lock detection))
+    Idle line
+      idle 10s → check
+      you confirmed → recheck in 60s
+      nobody → straight to locking
+    Anti-stranger line
+      forced recheck every 300s
+      regardless of idle
+    Unlock line
+      active when locked
+        wake transition → recognize
+        keypress on lock screen → recognize
+      your face → auto-inject password
+```
 
 ```mermaid
 flowchart TD
-    A[ARMED - idle, camera off] -->|idle > 10s & last confirm > 30s<br>OR last confirm > 300s| B[CHECKING - camera on, 1 frame/s]
-    B -->|your face found| A
+    A[ARMED - idle, camera off] -->|idle > 10s & past dynamic interval<br>OR last confirm > 300s| B[CHECKING - camera on]
+    B -->|your face found<br>interval set to 60s| A
     B -->|nobody or stranger for 10s| C[ALERT - 3s countdown]
     C -->|your face appears| B
-    C -->|countdown ends| D[LOCKED - display sleep, camera off]
+    C -->|countdown ends| D[LOCKED - display sleep]
     D -->|after 60s| A
+    D -->|unlock watch: wake / keypress| E[recognize face → inject password]
+    E -->|unlocked| A
 ```
 
 Face embedding: Apple Vision `VNCreateFaceprintRequest` (128-dim, Neural Engine). Configurable parameters in `config.json` (idle/absent/countdown thresholds, match distance, recheck interval).
@@ -109,6 +141,7 @@ presence-lock/
 ├── register.py                # interactive face registration
 ├── idle.py                    # keyboard/mouse idle time (ioreg HIDIdleTime)
 ├── locker.py                  # pmset displaysleepnow locking
+├── unlock.py                  # auto-unlock: lock watch → face verify → password injection
 ├── grant_camera.swift         # TCC camera permission helper (swiftc)
 ├── run.sh                     # venv launcher (clears host PYTHONPATH)
 ├── start-presence-lock.command  # double-click background start
@@ -127,9 +160,7 @@ presence-lock/
 
 - **Distinguish "nobody" from "stranger"** — separate lock timers: 60s when no face is visible (you may be looking down or briefly away), 10s when a stranger's face is detected. A stranger seen recently keeps the fast timer even if they step out of frame.
 - **Human-body detection as a fallback** — run `VNDetectHumanRectanglesRequest` alongside face detection in one Vision call, so looking down or turning away does not count as "left".
-- **Auto-unlock after wake (face-verified password injection)** — wake the screen with any key (or press a key on the lock screen), recognize *your* face, then auto-fill the password (stored in Keychain) into the login window via event injection — no Touch ID needed. Camera opens only during detection, not continuously.
-  - *Status: all prerequisite experiments pass (verified on macOS 15)* — camera readable while locked; CGEvent injection into `loginwindow` works (must run from a host granted Accessibility, e.g. iTerm); lock detection via `CGSSessionScreenIsLocked`; triggers = black-screen wake transition + keypress on lock screen (HIDIdleTime reset).
-  - *Why:* on a built-in MacBook keyboard, Touch ID is one keypress away, so this feature saves little. But on an external-display setup (Mac mini, Mac Studio, closed-lid MacBook), there is no Touch ID — unlocking means reaching for the laptop or typing a password. Apple's own answer to this scenario is Apple Watch unlock (extra hardware); this feature uses the camera you already own. Note: Bluetooth keyboards need *Allow Bluetooth devices to wake this Mac* enabled in System Settings.
+- **Media playback exemption** — when video/fullscreen playback is detected (`pmset -g assertions` Media playback assertion), lengthen the check interval automatically so watching video never triggers the camera.
 
 ## Pitfalls for Contributors
 
@@ -142,6 +173,10 @@ This repo exists because the obvious approaches do not work on macOS. Read these
 - **OpenCV requests camera permission and fails immediately** if the user hasn't answered yet. Request permission first via the bundled Swift helper.
 - **pyobjc lacks `VNGenerateFaceEmbeddingsRequest`** (macOS 14 API) — use `VNCreateFaceprintRequest` + `faceprint().descriptorData()` (128 float32).
 - **Host environments inject PYTHONPATH** — always launch via `run.sh` (clears it), or numpy imports crash with cryptic version errors.
+- **Lock detection: use `CGSSessionScreenIsLocked`** (from `CGSessionCopyCurrentDictionary`; the key carries a `kCGS` prefix — easy to typo). `kCGSSessionOnConsoleKey` stays `True` while locked, so it cannot be used to detect a lock.
+- **CGEvent injection permission follows the host app** — authorized iTerm works; double-click start requires authorizing "Terminal". Unauthorized injection fails silently (no error), so the start script actively probes permission.
+- **Injection speed**: 0.015s per character is the safe floor — faster drops characters and the password fails; 0.05s makes the typing visibly slow.
+- **Wake detection**: polling `CGDisplayIsAsleep` is enough — the black→bright transition is a reliable unlock trigger; lock-screen keypress trigger uses `HIDIdleTime` reset (ioreg).
 
 ## License
 
