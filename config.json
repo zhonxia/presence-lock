@@ -1,11 +1,12 @@
 {
   "camera_index": 0,
   "idle_threshold_sec": 10,
-  "idle_grace_sec": 90,
+  "idle_grace_sec": 30,
   "absent_lock_sec": 10,
   "alert_sec": 3,
   "recheck_interval_sec": 300,
   "frame_interval_sec": 1.0,
   "match_threshold": 0.60,
-  "known_faces_path": "known_faces.npy"
+  "known_faces_path": "known_faces.npy",
+  "unlock_enabled": true
 }

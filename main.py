@@ -24,6 +24,7 @@ import numpy as np
 
 import idle
 import locker
+import unlock
 import vision_face
 
 
@@ -123,11 +124,25 @@ class Presencer:
               f"（倒计时 {cfg['alert_sec']}s）")
         print(f"  每 {cfg['recheck_interval_sec']}s 强制复查一次，防陌生人使用")
         print("  Ctrl+C 退出")
-        self.last_confirmed = time.time()
+        # 启动时没有"确认过本人"的历史，last_confirmed 归零：
+        # 否则 idle_grace 会让程序启动后 90 秒内不检测（人离开也不锁）
+        self.last_confirmed = 0.0
 
         while True:
             now = time.time()
             try:
+                # 锁屏/黑屏状态：启用解锁时走解锁监听（唤醒/按键 → 人脸识别 → 注入密码）
+                if self.cfg.get("unlock_enabled", False) and (
+                    unlock.screen_locked() or unlock.display_asleep()
+                ):
+                    self.close_cam()
+                    print("[解锁监听] 锁屏/黑屏，等待唤醒或按键...", flush=True)
+                    if unlock.watch_for_unlock(self.known, self.cfg["match_threshold"]):
+                        self.state = "ARMED"
+                        self.last_confirmed = time.time()
+                        print("[解锁成功，回待机]", flush=True)
+                    continue
+
                 if self.state == "ARMED":
                     self.close_cam()
                     idle_s = idle.idle_seconds()
