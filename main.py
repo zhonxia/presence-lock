@@ -125,8 +125,11 @@ class Presencer:
         print(f"  每 {cfg['recheck_interval_sec']}s 强制复查一次，防陌生人使用")
         print("  Ctrl+C 退出")
         # 启动时没有"确认过本人"的历史，last_confirmed 归零：
-        # 否则 idle_grace 会让程序启动后 90 秒内不检测（人离开也不锁）
+        # 否则 idle_grace 会让程序启动后不检测（人离开也不锁）
         self.last_confirmed = 0.0
+        # 动态检查间隔：初始=idle_threshold（启动后空闲即查），
+        # 确认本人在场后 = idle_grace_sec（人在就 60 秒后再查）
+        self.check_interval = cfg["idle_threshold_sec"]
 
         while True:
             now = time.time()
@@ -140,6 +143,7 @@ class Presencer:
                     if unlock.watch_for_unlock(self.known, self.cfg["match_threshold"]):
                         self.state = "ARMED"
                         self.last_confirmed = time.time()
+                        self.check_interval = cfg["idle_grace_sec"]
                         print("[解锁成功，回待机]", flush=True)
                     continue
 
@@ -147,7 +151,9 @@ class Presencer:
                     self.close_cam()
                     idle_s = idle.idle_seconds()
                     since_confirm = now - self.last_confirmed
-                    idle_long = idle_s > cfg["idle_threshold_sec"] and since_confirm > cfg["idle_grace_sec"]
+                    # 空闲线：空闲超阈值 且 超过动态检查间隔（人在=grace 60s，首查=10s）
+                    idle_long = idle_s > cfg["idle_threshold_sec"] and since_confirm > self.check_interval
+                    # 防陌生人线：无论空闲与否，距上次确认超 300s 强制复查
                     due_recheck = since_confirm > cfg["recheck_interval_sec"]
                     if idle_long or due_recheck:
                         self.state = "CHECKING"
@@ -170,6 +176,8 @@ class Presencer:
                     if r == "self":
                         self.last_confirmed = now
                         self.absent_since = None
+                        # 人在 → 复查间隔拉长到 grace（看视频不频繁检测）
+                        self.check_interval = cfg["idle_grace_sec"]
                         self.state = "ARMED"
                         print("[确认本人，回待机]", flush=True)
                     else:
@@ -207,6 +215,8 @@ class Presencer:
                     if time.time() >= self.lock_until:
                         self.state = "ARMED"
                         self.last_confirmed = time.time()
+                        # 刚锁过屏，首次检查间隔用短档（idle_threshold），尽快确认
+                        self.check_interval = cfg["idle_threshold_sec"]
                         print("[回到待机]", flush=True)
                     else:
                         time.sleep(5)
