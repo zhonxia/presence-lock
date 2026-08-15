@@ -106,6 +106,8 @@ def try_unlock(known, threshold):
     if not cap.isOpened():
         print("[解锁] 摄像头打不开，跳过")
         return False
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # 480p 采集，同主程序
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     time.sleep(0.6)  # 预热
 
     matched = False
