@@ -159,7 +159,8 @@ class Presencer:
                         self.state = "CHECKING"
                         self.absent_since = None
                         print(f"[进入确认] idle={idle_s:.0f}s 距上次确认 {since_confirm:.0f}s", flush=True)
-                    time.sleep(1.0)
+                    # 待机轮询间隔 2s：ioreg spawn 减半（省 CPU/耗电），触发延迟无感
+                    time.sleep(2.0)
 
                 elif self.state == "CHECKING":
                     if not self.open_cam():

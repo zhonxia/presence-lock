@@ -188,7 +188,7 @@ def watch_for_unlock(known, threshold, timeout=3600):
                 if not screen_locked():
                     return True
             prev_idle = cur_idle
-            time.sleep(0.5)
+            time.sleep(1.0)  # idle 轮询 1s：ioreg spawn 减半，下降沿检测粒度够
         else:
             # 亮屏且未锁：已解锁或从未锁定
             return True
