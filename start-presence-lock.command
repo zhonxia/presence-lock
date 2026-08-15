@@ -35,6 +35,15 @@ echo ""
 echo "  此窗口现在可以关闭，不影响程序"
 echo "  日志：presence-lock.log"
 echo "  停止：双击 stop-presence-lock.command"
+echo "------------------------------------------------"
+# 辅助功能权限探测：决定自动解锁（人脸识别→注入密码）是否可用
+if osascript -e 'tell application "System Events" to get name of first process' > /dev/null 2>&1; then
+    echo "  自动解锁：权限正常 ✅"
+else
+    echo "  ⚠️ 自动解锁不可用：当前宿主未授权辅助功能"
+    echo "     启用方法：系统设置 > 隐私与安全性 > 辅助功能"
+    echo "     → 添加并勾选「终端」（或启动本脚本的 app）"
+fi
 echo "================================================"
 echo ""
 # 脚本结束，trap EXIT 会提示按回车关闭窗口（程序已在后台，关窗无影响）
