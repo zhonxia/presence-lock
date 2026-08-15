@@ -149,6 +149,7 @@ def watch_for_unlock(known, threshold, timeout=3600):
 
     start = time.time()
     prev_asleep = display_asleep()
+    prev_idle = idle.idle_seconds()  # 下降沿检测用：idle 从大变小 = 刚有人按键
     last_attempt = 0.0
     while time.time() - start < timeout:
         asleep = display_asleep()
@@ -173,13 +174,20 @@ def watch_for_unlock(known, threshold, timeout=3600):
         prev_asleep = asleep
 
         if screen_locked():
-            # 亮屏锁屏界面：检测到按键（HIDIdleTime 归零）→ 识别
-            if time.time() - last_attempt >= 5 and idle.idle_seconds() < 3.0:
+            # 亮屏锁屏界面：idle 从大变小 = 刚有人按键要解锁 → 识别
+            # （不能用 idle<3 判断：Cmd+Ctrl+Q 锁屏本身也是按键，会误触发）
+            cur_idle = idle.idle_seconds()
+            if (
+                cur_idle < 2.0
+                and prev_idle > 5.0
+                and time.time() - last_attempt >= 5
+            ):
                 last_attempt = time.time()
                 print("[解锁] 检测到按键，识别")
                 try_unlock(known, threshold)
                 if not screen_locked():
                     return True
+            prev_idle = cur_idle
             time.sleep(0.5)
         else:
             # 亮屏且未锁：已解锁或从未锁定
